@@ -3,17 +3,18 @@ package online.suzuai.admin.net
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-/**
- * REST client for /api/admin/* on a running Suzu AI server.
- * All calls are auth'd with Bearer SUZU_ADMIN_TOKEN.
- */
+// REST client for the admin namespace on a running Suzu AI server.
+// All calls are authenticated with Bearer SUZU_ADMIN_TOKEN.
 class AdminApi(private val baseUrl: String, private val token: String) {
     private val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
@@ -103,6 +104,37 @@ class AdminApi(private val baseUrl: String, private val token: String) {
 
     suspend fun resetTokens(userId: String): Result<Unit> =
         post("/api/admin/users/$userId/reset-tokens", JSONObject())
+
+    // Streams the backup ZIP into [dest].
+    suspend fun downloadBackup(dest: java.io.File): Result<Long> = withContext(Dispatchers.IO) {
+        runCatching {
+            val req = authed(Request.Builder().url(url("/api/admin/backup")).get()).build()
+            http.newCall(req).execute().use { resp ->
+                check(resp.isSuccessful) { "HTTP ${resp.code}" }
+                val body = resp.body ?: error("empty body")
+                dest.outputStream().use { out -> body.byteStream().copyTo(out) }
+                dest.length()
+            }
+        }
+    }
+
+    // Uploads a backup ZIP as multipart form-data (field name "backup").
+    suspend fun uploadRestore(src: java.io.File): Result<JSONObject> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val zipMedia = "application/zip".toMediaType()
+                val multipart = MultipartBody.Builder()
+                    .setType(MultipartBody.FORM)
+                    .addFormDataPart("backup", src.name, src.asRequestBody(zipMedia))
+                    .build()
+                val req = authed(Request.Builder().url(url("/api/admin/restore")).post(multipart)).build()
+                http.newCall(req).execute().use { resp ->
+                    val text = resp.body?.string().orEmpty()
+                    check(resp.isSuccessful) { "HTTP ${resp.code}: $text" }
+                    JSONObject(text)
+                }
+            }
+        }
 
     private suspend fun post(path: String, body: JSONObject): Result<Unit> =
         withContext(Dispatchers.IO) {
