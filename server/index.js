@@ -7,6 +7,7 @@ import { chatRouter } from './routes/chat.js';
 import { authRouter } from './routes/auth.js';
 import { modelsRouter } from './routes/models.js';
 import { apkRouter } from './routes/apk.js';
+import { adminRouter } from './routes/admin.js';
 import { initDB } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,6 +22,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/models', modelsRouter);
 app.use('/api/apk', apkRouter);
+app.use('/api/admin', adminRouter);
 
 // Serve frontend in production
 if (process.env.NODE_ENV === 'production') {

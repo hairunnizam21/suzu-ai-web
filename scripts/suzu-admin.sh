@@ -379,14 +379,42 @@ action_update_repo() {
 }
 
 action_view_env() {
-  c_bld "=== Current .env (API key masked) ==="
+  c_bld "=== Current .env (secrets masked) ==="
   awk -F= '{
-    if ($1=="AI_API_KEY") {
+    if ($1=="AI_API_KEY" || $1=="SUZU_ADMIN_TOKEN") {
       v=$2
       if (length(v)>8) { print $1"="substr(v,1,4)"…"substr(v,length(v)-3) }
       else { print $1"=…" }
     } else { print $0 }
   }' "$ENV_FILE"
+  press_enter
+}
+
+action_admin_token() {
+  c_bld "=== Admin token (for APK admin panel) ==="
+  local cur
+  cur="$(env_get SUZU_ADMIN_TOKEN)"
+  if [ -z "$cur" ]; then
+    c_yel "No token yet. Generating one…"
+  else
+    printf "Current: %s\n" "$cur"
+  fi
+  echo
+  echo "  1) Show full token"
+  echo "  2) Generate a new token (existing APK installs must re-pair)"
+  echo "  0) Back"
+  read -rp "Choice: " a
+  case "$a" in
+    1) printf "Token: %s\n" "$cur" ;;
+    2)
+       local newt
+       newt="$(openssl rand -hex 24 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '=/+' | head -c 48)"
+       env_set SUZU_ADMIN_TOKEN "$newt"
+       restart_service
+       c_grn "New admin token: $newt"
+       ;;
+    *) return ;;
+  esac
   press_enter
 }
 
@@ -417,6 +445,7 @@ show_menu() {
   echo " 13) View live logs"
   echo " 14) git pull + rebuild + restart"
   echo " 15) View current .env"
+  echo " 16) Admin token (show / regenerate)"
   echo "  0) Exit to shell"
   echo
   read -rp "Choose an option: " choice
@@ -443,6 +472,7 @@ main() {
       13) action_logs ;;
       14) action_update_repo ;;
       15) action_view_env ;;
+      16) action_admin_token ;;
       0|q|Q|exit) c_grn "Bye."; exit 0 ;;
       *) c_red "Invalid choice."; sleep 1 ;;
     esac

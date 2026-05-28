@@ -10,13 +10,18 @@ export const chatRouter = Router();
 // All chat routes require auth
 chatRouter.use(verifyAuth);
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_API_KEY || 'placeholder-key',
-  baseURL: process.env.AI_API_BASE_URL || 'https://core.fiqstr.com/v1',
-});
+// Build a fresh OpenAI client per request so config changes via /api/admin/config
+// take effect immediately without needing a service restart.
+function getOpenAIClient() {
+  return new OpenAI({
+    apiKey: process.env.AI_API_KEY || 'placeholder-key',
+    baseURL: process.env.AI_API_BASE_URL || 'https://core.fiqstr.com/v1',
+  });
+}
 
-const DEFAULT_MODEL =
-  process.env.AI_DEFAULT_MODEL || 'fiqstr/claude-sonnet-4.6-thinking-agentic';
+function getDefaultModel() {
+  return process.env.AI_DEFAULT_MODEL || 'fiqstr/claude-sonnet-4.6-thinking-agentic';
+}
 
 const MAX_TOOL_ITERATIONS = 6;
 
@@ -66,7 +71,7 @@ chatRouter.get('/conversations', (req, res) => {
 chatRouter.post('/conversations', (req, res) => {
   const db = getDB();
   const id = uuidv4();
-  const model = req.body.model || DEFAULT_MODEL;
+  const model = req.body.model || getDefaultModel();
 
   db.prepare(
     'INSERT INTO conversations (id, user_id, title, model) VALUES (?, ?, ?, ?)'
@@ -172,8 +177,9 @@ chatRouter.post('/conversations/:id/messages', async (req, res) => {
 
   try {
     for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+      const openai = getOpenAIClient();
       const stream = await openai.chat.completions.create({
-        model: conversation.model || DEFAULT_MODEL,
+        model: conversation.model || getDefaultModel(),
         messages: apiMessages,
         tools: AI_TOOLS,
         stream: true,
