@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+
+# APK workspace artifacts
+data/
+server/keystores/
+

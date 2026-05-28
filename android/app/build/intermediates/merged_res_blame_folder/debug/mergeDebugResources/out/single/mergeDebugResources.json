@@ -1,0 +1,14 @@
+[
+    {
+        "merged": "online.suzuai.admin.app-debug-45:/drawable_ic_launcher_foreground.xml.flat",
+        "source": "online.suzuai.admin.app-main-47:/drawable/ic_launcher_foreground.xml"
+    },
+    {
+        "merged": "online.suzuai.admin.app-debug-45:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "online.suzuai.admin.app-main-47:/mipmap-anydpi-v26/ic_launcher_round.xml"
+    },
+    {
+        "merged": "online.suzuai.admin.app-debug-45:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "online.suzuai.admin.app-main-47:/mipmap-anydpi-v26/ic_launcher.xml"
+    }
+]
