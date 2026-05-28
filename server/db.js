@@ -7,6 +7,10 @@ const dbPath = path.join(__dirname, '..', 'suzu.db');
 
 export const DEFAULT_DAILY_TOKEN_LIMIT = 2_000_000;
 
+export function getDbPath() {
+  return dbPath;
+}
+
 let db;
 
 export function getDB() {
@@ -15,6 +19,22 @@ export function getDB() {
     db.pragma('journal_mode = WAL');
   }
   return db;
+}
+
+export function closeDB() {
+  if (db) {
+    try { db.close(); } catch { /* ignore */ }
+    db = null;
+  }
+}
+
+/**
+ * Snapshot the current database to a destination path using SQLite's online
+ * backup API. Safe to call while the server is running.
+ */
+export async function backupTo(destPath) {
+  const database = getDB();
+  await database.backup(destPath);
 }
 
 function columnExists(database, table, column) {
