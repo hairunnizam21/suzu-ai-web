@@ -103,6 +103,11 @@ export function pickToken(requestedModel) {
  * @returns {{ stream, model, tokenId }} on success
  * @throws if all tokens (and env fallback) fail
  */
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 2000;
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
 export async function createChatWithFailover(params) {
   const rows = getActiveTokens();
   const candidates = [...rows];
@@ -117,32 +122,42 @@ export async function createChatWithFailover(params) {
       process.env.AI_DEFAULT_MODEL || 'fiqstr/claude-sonnet-4.6-thinking-agentic';
     const tokenId = row ? row.id : null;
 
-    try {
-      const stream = await client.chat.completions.create({
-        ...params,
-        model,
-        stream: true,
-      });
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const stream = await client.chat.completions.create({
+          ...params,
+          model,
+          stream: true,
+        });
 
-      // Success — touch last_used_at
-      if (tokenId) touchUsed(tokenId);
+        // Success — touch last_used_at
+        if (tokenId) touchUsed(tokenId);
 
-      return { stream, model, tokenId };
-    } catch (err) {
-      lastError = err;
-      const status = err?.status || err?.response?.status;
-      const msg = err?.message || String(err);
+        return { stream, model, tokenId };
+      } catch (err) {
+        lastError = err;
+        const status = err?.status || err?.response?.status;
+        const msg = err?.message || String(err);
 
-      if (tokenId && (RETRIABLE_STATUS_CODES.has(status) || AUTH_ERROR_CODES.has(status))) {
-        markExhausted(tokenId, `HTTP ${status}: ${msg.slice(0, 200)}`);
-        continue; // try next token
+        // Rate limit — retry with backoff
+        if (RETRIABLE_STATUS_CODES.has(status) && attempt < MAX_RETRIES) {
+          console.log(`Rate limited (HTTP ${status}), retry ${attempt + 1}/${MAX_RETRIES} in ${RETRY_DELAY_MS * (attempt + 1)}ms...`);
+          await sleep(RETRY_DELAY_MS * (attempt + 1));
+          continue;
+        }
+
+        if (tokenId && (RETRIABLE_STATUS_CODES.has(status) || AUTH_ERROR_CODES.has(status))) {
+          markExhausted(tokenId, `HTTP ${status}: ${msg.slice(0, 200)}`);
+          break; // try next candidate
+        }
+
+        // For non-pool tokens (env fallback) with non-retriable errors, throw
+        if (!tokenId) throw err;
+
+        // For pool tokens with non-retriable errors, mark and try next
+        markExhausted(tokenId, `Error: ${msg.slice(0, 200)}`);
+        break;
       }
-
-      // For non-pool tokens (env fallback) or unknown errors, just throw
-      if (!tokenId) throw err;
-
-      // For pool tokens with non-retriable errors, mark and continue
-      markExhausted(tokenId, `Error: ${msg.slice(0, 200)}`);
     }
   }
 

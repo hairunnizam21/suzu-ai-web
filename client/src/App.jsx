@@ -243,12 +243,13 @@ function App() {
       loadUsage();
     } catch (err) {
       console.error('Send failed:', err);
+      const errMsg = err.message || '';
       const msg =
-        err.status === 429 || (err.message && err.message.includes('rate_limit'))
-          ? 'Rate limit tercapai. Cuba lagi sebentar.'
-          : err.status === 500 && err.message?.includes('Too many requests')
-          ? 'Server sibuk. Cuba lagi dalam beberapa saat.'
-          : err.message || 'Maaf, ada masalah. Sila cuba lagi.';
+        err.status === 429 || errMsg.includes('rate_limit') || errMsg.includes('Too many requests') || errMsg.includes('rate limit')
+          ? 'Server sibuk (rate limit). Cuba lagi dalam beberapa saat.'
+          : errMsg.includes('network') || errMsg.includes('fetch') || errMsg.includes('Failed to fetch')
+          ? 'Masalah rangkaian. Periksa internet anda dan cuba lagi.'
+          : errMsg || 'Maaf, ada masalah. Sila cuba lagi.';
       setMessages((prev) => [...prev, { role: 'assistant', content: msg }]);
       setStreamingContent('');
       setStreamingTool(null);
