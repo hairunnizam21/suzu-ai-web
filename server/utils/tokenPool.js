@@ -12,7 +12,7 @@ import { getDB } from '../db.js';
  * marked `exhausted` and the next one is tried automatically.
  */
 
-const RETRIABLE_STATUS_CODES = new Set([429, 402, 503]);
+const RETRIABLE_STATUS_CODES = new Set([429, 402, 500, 503]);
 const AUTH_ERROR_CODES = new Set([401, 403]);
 
 /**
