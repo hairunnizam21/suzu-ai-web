@@ -84,25 +84,31 @@ function App() {
     }
   };
 
-  const handleSend = async (content) => {
+  const handleSend = async (content, imageFile) => {
     if (!activeConvId) {
-      // Auto-create conversation
       try {
         const conv = await createConversation(selectedModel);
         setConversations((prev) => [conv, ...prev]);
         setActiveConvId(conv.id);
         setMessages([]);
-        await sendAndStream(conv.id, content);
+        await sendAndStream(conv.id, content, imageFile);
       } catch (err) {
         console.error('Failed to create conversation:', err);
       }
       return;
     }
-    await sendAndStream(activeConvId, content);
+    await sendAndStream(activeConvId, content, imageFile);
   };
 
-  const sendAndStream = async (convId, content) => {
-    const userMsg = { role: 'user', content };
+  const sendAndStream = async (convId, content, imageFile) => {
+    let imageUrl = null;
+    let imageBase64 = null;
+    if (imageFile) {
+      imageBase64 = await fileToBase64(imageFile);
+      imageUrl = imageBase64;
+    }
+
+    const userMsg = { role: 'user', content: content || '(image)', imageUrl };
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
     setStreamingContent('');
@@ -113,7 +119,7 @@ function App() {
       await sendMessage(convId, content, (chunk) => {
         fullResponse += chunk;
         setStreamingContent(fullResponse);
-      });
+      }, imageBase64);
 
       setMessages((prev) => [...prev, { role: 'assistant', content: fullResponse }]);
       setStreamingContent('');
@@ -128,6 +134,14 @@ function App() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const fileToBase64 = (file) => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.readAsDataURL(file);
+    });
   };
 
   const handleDelete = async (convId) => {
@@ -184,6 +198,8 @@ function App() {
           onSend={handleSend}
           isLoading={isLoading}
           streamingContent={streamingContent}
+          selectedModel={selectedModel}
+          models={models}
         />
       </main>
     </div>

@@ -60,7 +60,7 @@ chatRouter.get('/conversations/:id/messages', (req, res) => {
 // Send message and get AI response (streaming)
 chatRouter.post('/conversations/:id/messages', async (req, res) => {
   const db = getDB();
-  const { content } = req.body;
+  const { content, image } = req.body;
 
   // Verify conversation belongs to user
   const conversation = db.prepare(
@@ -74,12 +74,40 @@ chatRouter.post('/conversations/:id/messages', async (req, res) => {
   // Save user message
   db.prepare(
     'INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)'
-  ).run(req.params.id, 'user', content);
+  ).run(req.params.id, 'user', content || '(image)');
 
-  // Get conversation history
+  // Get conversation history for API (text only)
   const history = db.prepare(
     'SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at ASC'
   ).all(req.params.id);
+
+  // Build messages array for the AI
+  const apiMessages = [
+    { role: 'system', content: 'You are SuzuneiAyano-AI, a helpful and intelligent assistant. Respond in the same language the user uses. Be concise and helpful. When analyzing images, describe what you see in detail.' },
+  ];
+
+  // Add history (all previous messages as text)
+  for (const msg of history.slice(0, -1)) {
+    apiMessages.push({ role: msg.role, content: msg.content });
+  }
+
+  // Add current message (with image if provided)
+  if (image) {
+    const userContent = [];
+    if (content) {
+      userContent.push({ type: 'text', text: content });
+    }
+    const base64Data = image.includes(',') ? image.split(',')[1] : image;
+    const mimeMatch = image.match(/^data:(image\/\w+);/);
+    const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+    userContent.push({
+      type: 'image_url',
+      image_url: { url: `data:${mimeType};base64,${base64Data}` },
+    });
+    apiMessages.push({ role: 'user', content: userContent });
+  } else {
+    apiMessages.push({ role: 'user', content: content });
+  }
 
   // Set up SSE for streaming
   res.setHeader('Content-Type', 'text/event-stream');
@@ -89,10 +117,7 @@ chatRouter.post('/conversations/:id/messages', async (req, res) => {
   try {
     const stream = await openai.chat.completions.create({
       model: conversation.model || process.env.AI_DEFAULT_MODEL || 'fiqstr/claude-opus-4.7-thinking-agentic',
-      messages: [
-        { role: 'system', content: 'You are Suzu AI, a helpful and intelligent assistant. Respond in the same language the user uses. Be concise and helpful.' },
-        ...history,
-      ],
+      messages: apiMessages,
       stream: true,
     });
 

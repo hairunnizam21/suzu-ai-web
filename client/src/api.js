@@ -39,15 +39,18 @@ export async function fetchMessages(conversationId) {
   return data;
 }
 
-export async function sendMessage(conversationId, content, onChunk) {
+export async function sendMessage(conversationId, content, onChunk, imageBase64) {
   const token = await getIdToken();
+  const body = { content };
+  if (imageBase64) body.image = imageBase64;
+
   const res = await fetch(`${API_BASE}/chat/conversations/${conversationId}/messages`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
