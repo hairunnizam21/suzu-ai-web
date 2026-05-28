@@ -11,6 +11,9 @@ import {
   isProbablyText,
 } from './apkTools.js';
 
+const MAX_SEARCH_HITS = 60;
+const MAX_SEARCH_BYTES_PER_FILE = 2 * 1024 * 1024; // 2 MB per file scanned
+
 /**
  * OpenAI/Fiqstr-compatible function tool definitions.
  * The model may decide to call any of these.
@@ -90,6 +93,44 @@ export const AI_TOOLS = [
           content: { type: 'string', description: 'Full new file content.' },
         },
         required: ['project_id', 'path', 'content'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'apk_search',
+      description:
+        'Grep-style search across all decompiled text files. Returns up to 60 matches with file path, line number and matched line. Use this to find URLs, suspicious API calls (e.g. "sendTextMessage", "Runtime;->exec"), package references, etc.',
+      parameters: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          pattern: {
+            type: 'string',
+            description: 'Case-insensitive substring or simple regex (JS syntax) to search for.',
+          },
+          path_prefix: {
+            type: 'string',
+            description: 'Optional path prefix to limit the search (e.g. "smali/" or "res/values").',
+          },
+        },
+        required: ['project_id', 'pattern'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'apk_info',
+      description:
+        'Quick summary of a decompiled APK: package name, version, min/target SDK, requested permissions, activities, services, receivers, providers. Reads AndroidManifest.xml and apktool.yml.',
+      parameters: {
+        type: 'object',
+        properties: { project_id: { type: 'string' } },
+        required: ['project_id'],
         additionalProperties: false,
       },
     },
@@ -245,6 +286,98 @@ async function execRecompile(userId, projectId) {
   };
 }
 
+async function execSearch(userId, projectId, pattern, pathPrefix) {
+  const project = getProject(userId, projectId);
+  if (!project) return { ok: false, error: 'Project not found' };
+  if (!pattern) return { ok: false, error: 'pattern is required' };
+  const dir = getDecompiledPath(userId, projectId);
+  if (!fs.existsSync(dir)) return { ok: false, error: 'Project is not decompiled yet' };
+
+  let regex;
+  try {
+    regex = new RegExp(pattern, 'i');
+  } catch {
+    // Fallback: literal substring
+    const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    regex = new RegExp(escaped, 'i');
+  }
+
+  const tree = await listTree(dir);
+  const candidates = tree.filter((e) => {
+    if (e.type !== 'file') return false;
+    if (pathPrefix && !e.path.startsWith(pathPrefix)) return false;
+    if (!isProbablyText(e.path)) return false;
+    if (e.size > MAX_SEARCH_BYTES_PER_FILE) return false;
+    return true;
+  });
+
+  const hits = [];
+  let scanned = 0;
+  for (const entry of candidates) {
+    if (hits.length >= MAX_SEARCH_HITS) break;
+    scanned++;
+    let content;
+    try {
+      content = await fs.promises.readFile(safeResolve(dir, entry.path), 'utf8');
+    } catch {
+      continue;
+    }
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      if (regex.test(lines[i])) {
+        hits.push({
+          path: entry.path,
+          line: i + 1,
+          text: lines[i].length > 240 ? lines[i].slice(0, 240) + '…' : lines[i],
+        });
+        if (hits.length >= MAX_SEARCH_HITS) break;
+      }
+    }
+  }
+
+  return { ok: true, pattern, scanned_files: scanned, total_hits: hits.length, truncated: hits.length >= MAX_SEARCH_HITS, hits };
+}
+
+function parseManifest(xml) {
+  // Lightweight regex-based extraction — AndroidManifest.xml after apktool d is plain XML.
+  const out = {};
+  const pkg = xml.match(/<manifest[^>]*\bpackage="([^"]+)"/);
+  if (pkg) out.package = pkg[1];
+  const ver = xml.match(/android:versionName="([^"]+)"/);
+  if (ver) out.versionName = ver[1];
+  const verCode = xml.match(/android:versionCode="([^"]+)"/);
+  if (verCode) out.versionCode = verCode[1];
+  const minSdk = xml.match(/android:minSdkVersion="([^"]+)"/);
+  if (minSdk) out.minSdk = minSdk[1];
+  const targetSdk = xml.match(/android:targetSdkVersion="([^"]+)"/);
+  if (targetSdk) out.targetSdk = targetSdk[1];
+  const perms = [...xml.matchAll(/<uses-permission[^>]*android:name="([^"]+)"/g)].map((m) => m[1]);
+  out.permissions = perms;
+  const activities = [...xml.matchAll(/<activity[^>]*android:name="([^"]+)"/g)].map((m) => m[1]);
+  const services = [...xml.matchAll(/<service[^>]*android:name="([^"]+)"/g)].map((m) => m[1]);
+  const receivers = [...xml.matchAll(/<receiver[^>]*android:name="([^"]+)"/g)].map((m) => m[1]);
+  const providers = [...xml.matchAll(/<provider[^>]*android:name="([^"]+)"/g)].map((m) => m[1]);
+  out.activities = activities;
+  out.services = services;
+  out.receivers = receivers;
+  out.providers = providers;
+  return out;
+}
+
+async function execInfo(userId, projectId) {
+  const project = getProject(userId, projectId);
+  if (!project) return { ok: false, error: 'Project not found' };
+  const dir = getDecompiledPath(userId, projectId);
+  if (!fs.existsSync(dir)) return { ok: false, error: 'Project is not decompiled yet' };
+  const manifestPath = path.join(dir, 'AndroidManifest.xml');
+  if (!fs.existsSync(manifestPath)) {
+    return { ok: false, error: 'AndroidManifest.xml not found' };
+  }
+  const xml = await fs.promises.readFile(manifestPath, 'utf8');
+  const parsed = parseManifest(xml);
+  return { ok: true, ...parsed };
+}
+
 /**
  * Run a tool call invoked by the AI. Returns a plain JSON result that will be
  * stringified and fed back as a "tool" role message.
@@ -262,6 +395,10 @@ export async function runToolCall(userId, name, args) {
         return await execReadFile(userId, args?.project_id, args?.path);
       case 'apk_edit_file':
         return await execEditFile(userId, args?.project_id, args?.path, args?.content);
+      case 'apk_search':
+        return await execSearch(userId, args?.project_id, args?.pattern, args?.path_prefix);
+      case 'apk_info':
+        return await execInfo(userId, args?.project_id);
       case 'apk_recompile':
         return await execRecompile(userId, args?.project_id);
       default:

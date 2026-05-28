@@ -1,13 +1,15 @@
 import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 
-export default function ChatWindow({ messages, onSend, isLoading, streamingContent, streamingTool, selectedModel, models }) {
+export default function ChatWindow({ messages, onSend, onSendApk, isLoading, streamingContent, streamingTool, selectedModel, models, user }) {
   const [input, setInput] = useState('');
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
+  const [apkFile, setApkFile] = useState(null);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
+  const apkInputRef = useRef(null);
   const textareaRef = useRef(null);
 
   useEffect(() => {
@@ -23,8 +25,14 @@ export default function ChatWindow({ messages, onSend, isLoading, streamingConte
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if ((!input.trim() && !imageFile) || isLoading) return;
-    onSend(input.trim(), imageFile);
+    if ((!input.trim() && !imageFile && !apkFile) || isLoading) return;
+    if (apkFile) {
+      onSendApk?.(apkFile, input.trim());
+      setApkFile(null);
+      if (apkInputRef.current) apkInputRef.current.value = '';
+    } else {
+      onSend(input.trim(), imageFile);
+    }
     setInput('');
     setImageFile(null);
     setImagePreview(null);
@@ -53,15 +61,53 @@ export default function ChatWindow({ messages, onSend, isLoading, streamingConte
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const handleApkSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const lower = (file.name || '').toLowerCase();
+    if (!lower.endsWith('.apk') && !lower.endsWith('.xapk')) {
+      alert('Sila pilih fail .apk atau .xapk');
+      e.target.value = '';
+      return;
+    }
+    setApkFile(file);
+    setImageFile(null);
+    setImagePreview(null);
+  };
+
+  const removeApk = () => {
+    setApkFile(null);
+    if (apkInputRef.current) apkInputRef.current.value = '';
+  };
+
   const modelName = models?.find(m => m.id === selectedModel)?.name || 'AI';
+  const userInitial = (user?.displayName || user?.email || 'U')[0]?.toUpperCase();
+  const aiStatus = computeAiStatus({ isLoading, streamingContent, streamingTool });
 
   return (
     <div className="chat-window">
       <div className="chat-header">
-        <div className="chat-header-info">
-          <h1 className="chat-header-title">SuzuneiAyano-AI 1.0</h1>
-          <span className="chat-header-model">{modelName}</span>
+        <div className="chat-header-user" title={user?.email || ''}>
+          {user?.photoURL ? (
+            <img className="chat-header-avatar" src={user.photoURL} alt="" />
+          ) : (
+            <div className="chat-header-avatar fallback">{userInitial}</div>
+          )}
+          <span className="online-dot" />
         </div>
+        <div className="chat-header-info">
+          <h1 className="chat-header-title">{user?.displayName || user?.email || 'You'}</h1>
+          <span className="chat-header-model">
+            Chatting with <b>SuzuneiAyano-AI</b> · {modelName}
+          </span>
+        </div>
+        {aiStatus && (
+          <div className={`ai-status ${aiStatus.tone}`} title={aiStatus.label}>
+            <span className="ai-status-icon">{aiStatus.icon}</span>
+            <span className="ai-status-label">{aiStatus.label}</span>
+            <span className="ai-dots"><i /><i /><i /></span>
+          </div>
+        )}
       </div>
 
       <div className="messages-container">
@@ -90,13 +136,17 @@ export default function ChatWindow({ messages, onSend, isLoading, streamingConte
             <div key={msg.id ?? i} className={`message ${msg.role}`}>
               <div className="message-avatar">
                 {msg.role === 'user' ? (
-                  <div className="avatar-user">U</div>
+                  user?.photoURL ? (
+                    <img className="avatar-user-img" src={user.photoURL} alt="" />
+                  ) : (
+                    <div className="avatar-user">{userInitial}</div>
+                  )
                 ) : (
                   <div className="avatar-ai">SA</div>
                 )}
               </div>
               <div className="message-body">
-                <span className="message-role">{msg.role === 'user' ? 'You' : 'SuzuneiAyano-AI'}</span>
+                <span className="message-role">{msg.role === 'user' ? (user?.displayName || 'You') : 'SuzuneiAyano-AI'}</span>
                 <div className="message-content">
                   {imgSrc && (
                     <div className="message-image">
@@ -139,15 +189,15 @@ export default function ChatWindow({ messages, onSend, isLoading, streamingConte
         )}
 
         {streamingContent && (
-          <div className="message assistant">
+          <div className="message assistant streaming">
             <div className="message-avatar">
-              <div className="avatar-ai">SA</div>
+              <div className="avatar-ai pulse">SA</div>
             </div>
             <div className="message-body">
               <span className="message-role">SuzuneiAyano-AI</span>
               <div className="message-content">
                 <ReactMarkdown>{streamingContent}</ReactMarkdown>
-                <span className="typing-cursor">|</span>
+                <span className="typing-cursor" />
               </div>
             </div>
           </div>
@@ -180,6 +230,16 @@ export default function ChatWindow({ messages, onSend, isLoading, streamingConte
             </div>
           </div>
         )}
+        {apkFile && (
+          <div className="image-preview-bar">
+            <div className="apk-attached-chip">
+              <span className="apk-attached-icon">📦</span>
+              <span className="apk-attached-name">{apkFile.name}</span>
+              <span className="apk-attached-size">{(apkFile.size / 1024 / 1024).toFixed(2)} MB</span>
+              <button className="image-remove-btn" onClick={removeApk}>&times;</button>
+            </div>
+          </div>
+        )}
         <form className="chat-input-form" onSubmit={handleSubmit}>
           <button
             type="button"
@@ -193,6 +253,14 @@ export default function ChatWindow({ messages, onSend, isLoading, streamingConte
               <polyline points="21 15 16 10 5 21"/>
             </svg>
           </button>
+          <button
+            type="button"
+            className="attach-btn"
+            onClick={() => apkInputRef.current?.click()}
+            title="Attach APK for analysis"
+          >
+            <span style={{ fontSize: 18, lineHeight: 1 }}>📦</span>
+          </button>
           <input
             ref={fileInputRef}
             type="file"
@@ -200,16 +268,23 @@ export default function ChatWindow({ messages, onSend, isLoading, streamingConte
             onChange={handleImageSelect}
             style={{ display: 'none' }}
           />
+          <input
+            ref={apkInputRef}
+            type="file"
+            accept=".apk,.xapk,application/vnd.android.package-archive"
+            onChange={handleApkSelect}
+            style={{ display: 'none' }}
+          />
           <textarea
             ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Message SuzuneiAyano-AI..."
+            placeholder={apkFile ? `Analisis APK: ${apkFile.name}… (boleh tambah nota)` : 'Message SuzuneiAyano-AI...'}
             rows={1}
             disabled={isLoading}
           />
-          <button type="submit" className="send-btn" disabled={(!input.trim() && !imageFile) || isLoading}>
+          <button type="submit" className="send-btn" disabled={(!input.trim() && !imageFile && !apkFile) || isLoading}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
               <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
             </svg>
@@ -218,4 +293,24 @@ export default function ChatWindow({ messages, onSend, isLoading, streamingConte
       </div>
     </div>
   );
+}
+
+function computeAiStatus({ isLoading, streamingContent, streamingTool }) {
+  if (!isLoading && !streamingContent && !streamingTool) return null;
+  if (streamingTool) {
+    const map = {
+      apk_list_projects: { icon: '📂', label: 'Listing projects' },
+      apk_decompile: { icon: '📦', label: 'Decompiling APK' },
+      apk_info: { icon: '📋', label: 'Reading manifest' },
+      apk_list_files: { icon: '📂', label: 'Listing files' },
+      apk_read_file: { icon: '📖', label: 'Reading file' },
+      apk_search: { icon: '🔎', label: 'Searching code' },
+      apk_edit_file: { icon: '✏️', label: 'Editing file' },
+      apk_recompile: { icon: '🔨', label: 'Building APK' },
+    };
+    const m = map[streamingTool.name] || { icon: '⚙️', label: streamingTool.name };
+    return { ...m, tone: streamingTool.phase === 'result' ? 'good' : 'busy' };
+  }
+  if (streamingContent) return { icon: '⌨️', label: 'Typing', tone: 'busy' };
+  return { icon: '💭', label: 'Thinking', tone: 'busy' };
 }

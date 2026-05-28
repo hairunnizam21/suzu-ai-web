@@ -9,6 +9,9 @@ import {
   deleteConversation,
   fetchModels,
   fetchUsage,
+  fetchMe,
+  apkUpload,
+  apkDecompile,
 } from './api';
 import LoginPage from './components/LoginPage';
 import Sidebar from './components/Sidebar';
@@ -29,6 +32,8 @@ function App() {
   const [selectedModel, setSelectedModel] = useState('fiqstr/claude-sonnet-4.6-thinking-agentic');
   const [view, setView] = useState('chat'); // 'chat' | 'apk'
   const [usage, setUsage] = useState(null);
+  const [plan, setPlan] = useState('free');
+  const [planExpiresAt, setPlanExpiresAt] = useState(null);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
@@ -47,13 +52,40 @@ function App() {
     }
   }, []);
 
+  const loadMe = useCallback(async () => {
+    try {
+      const me = await fetchMe();
+      if (me?.plan) setPlan(me.plan);
+      setPlanExpiresAt(me?.plan_expires_at || null);
+      if (me?.usage) setUsage(me.usage);
+    } catch (err) {
+      console.error('Failed to load /me:', err);
+    }
+  }, []);
+
   useEffect(() => {
     if (user) {
       loadConversations();
       loadModels();
       loadUsage();
+      loadMe();
     }
-  }, [user, loadUsage]);
+  }, [user, loadUsage, loadMe]);
+
+  // Deep-link: ?conv=<id> loads a specific conversation (only owner can read)
+  useEffect(() => {
+    if (!user) return;
+    const params = new URLSearchParams(window.location.search);
+    const convId = params.get('conv');
+    if (convId) {
+      handleSelectConversation(convId).catch(() => {});
+      // Clean the param from the URL so refreshes don't re-trigger
+      const url = new URL(window.location.href);
+      url.searchParams.delete('conv');
+      window.history.replaceState({}, '', url.toString());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   const loadConversations = async () => {
     try {
@@ -94,6 +126,54 @@ function App() {
       setMessages([]);
     } catch (err) {
       console.error('Failed to create conversation:', err);
+    }
+  };
+
+  const handleSendApk = async (file, note) => {
+    try {
+      let convId = activeConvId;
+      if (!convId) {
+        const conv = await createConversation(selectedModel);
+        setConversations((prev) => [conv, ...prev]);
+        setActiveConvId(conv.id);
+        setMessages([]);
+        convId = conv.id;
+      }
+
+      // Show a placeholder user message so the user gets immediate feedback
+      const sizeMB = (file.size / 1024 / 1024).toFixed(2);
+      const placeholder = `📦 Uploading APK: ${file.name} (${sizeMB} MB)…`;
+      setMessages((prev) => [...prev, { role: 'user', content: placeholder }]);
+      setIsLoading(true);
+
+      const project = await apkUpload(file);
+      setMessages((prev) => {
+        const next = prev.slice(0, -1);
+        next.push({ role: 'user', content: `📦 Uploaded ‘${file.name}’ — decompiling…` });
+        return next;
+      });
+      try {
+        await apkDecompile(project.id);
+      } catch (e) {
+        console.warn('Auto-decompile failed; AI can retry via tool', e);
+      }
+
+      const finalUserText =
+        (note && note.trim())
+          ? `${note}\n\n(Attached APK project_id: ${project.id}, name: ${project.name})`
+          : `Saya attach APK: ‘${project.name}’. project_id: ${project.id}. Sila analyze APK ini secara reverse-engineering: ringkaskan package, version, SDK, permissions berbahaya, components, URL/endpoint, suspicious APIs. Selepas itu cadangkan modifications yang berguna.`;
+
+      // Replace the placeholder with the final user message so it persists correctly
+      setMessages((prev) => {
+        const next = prev.slice(0, -1);
+        return next;
+      });
+      setIsLoading(false);
+      await sendAndStream(convId, finalUserText, null);
+    } catch (err) {
+      console.error('APK send failed', err);
+      setMessages((prev) => [...prev, { role: 'assistant', content: 'APK upload/decompile failed: ' + (err.message || err) }]);
+      setIsLoading(false);
     }
   };
 
@@ -235,17 +315,21 @@ function App() {
         view={view}
         onViewChange={setView}
         usage={usage}
+        plan={plan}
+        planExpiresAt={planExpiresAt}
       />
       <main className="main-content">
         {view === 'chat' ? (
           <ChatWindow
             messages={messages}
             onSend={handleSend}
+            onSendApk={handleSendApk}
             isLoading={isLoading}
             streamingContent={streamingContent}
             streamingTool={streamingTool}
             selectedModel={selectedModel}
             models={models}
+            user={user}
           />
         ) : (
           <ApkTools />

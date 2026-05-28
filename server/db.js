@@ -95,6 +95,12 @@ export function initDB() {
   if (!columnExists(database, 'users', 'tokens_reset_at')) {
     database.exec(`ALTER TABLE users ADD COLUMN tokens_reset_at TEXT`);
   }
+  if (!columnExists(database, 'users', 'plan')) {
+    database.exec(`ALTER TABLE users ADD COLUMN plan TEXT NOT NULL DEFAULT 'free'`);
+  }
+  if (!columnExists(database, 'users', 'plan_expires_at')) {
+    database.exec(`ALTER TABLE users ADD COLUMN plan_expires_at TEXT`);
+  }
 
   // Backfill apk_projects existence (no-op if already created above)
   if (!tableExists(database, 'apk_projects')) {
@@ -171,6 +177,31 @@ export function getUsage(userId) {
     tokens_limit_daily: row.tokens_limit_daily || DEFAULT_DAILY_TOKEN_LIMIT,
     tokens_reset_at: row.tokens_reset_at,
   };
+}
+
+/**
+ * Read the user's plan, auto-demoting expired premium back to free.
+ * Returns { plan, plan_expires_at }.
+ */
+export function getPlan(userId) {
+  const database = getDB();
+  const row = database
+    .prepare('SELECT plan, plan_expires_at FROM users WHERE id = ?')
+    .get(userId);
+  if (!row) return { plan: 'free', plan_expires_at: null };
+
+  let plan = row.plan || 'free';
+  const expiresAt = row.plan_expires_at ? new Date(row.plan_expires_at) : null;
+  if (plan === 'premium' && expiresAt && new Date() >= expiresAt) {
+    database
+      .prepare(
+        "UPDATE users SET plan='free', plan_expires_at=NULL, tokens_limit_daily=? WHERE id=?"
+      )
+      .run(DEFAULT_DAILY_TOKEN_LIMIT, userId);
+    plan = 'free';
+    return { plan: 'free', plan_expires_at: null };
+  }
+  return { plan, plan_expires_at: row.plan_expires_at || null };
 }
 
 /**
