@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 
-export default function ChatWindow({ messages, onSend, isLoading, streamingContent, selectedModel, models }) {
+export default function ChatWindow({ messages, onSend, isLoading, streamingContent, streamingTool, selectedModel, models }) {
   const [input, setInput] = useState('');
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
@@ -84,28 +84,59 @@ export default function ChatWindow({ messages, onSend, isLoading, streamingConte
           </div>
         )}
 
-        {messages.map((msg, i) => (
-          <div key={i} className={`message ${msg.role}`}>
+        {messages.map((msg, i) => {
+          const imgSrc = msg.image || msg.imageUrl;
+          return (
+            <div key={msg.id ?? i} className={`message ${msg.role}`}>
+              <div className="message-avatar">
+                {msg.role === 'user' ? (
+                  <div className="avatar-user">U</div>
+                ) : (
+                  <div className="avatar-ai">SA</div>
+                )}
+              </div>
+              <div className="message-body">
+                <span className="message-role">{msg.role === 'user' ? 'You' : 'SuzuneiAyano-AI'}</span>
+                <div className="message-content">
+                  {imgSrc && (
+                    <div className="message-image">
+                      <img src={imgSrc} alt="Uploaded" />
+                    </div>
+                  )}
+                  {msg.content && <ReactMarkdown>{msg.content}</ReactMarkdown>}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+
+        {streamingTool && (
+          <div className="message assistant tool">
             <div className="message-avatar">
-              {msg.role === 'user' ? (
-                <div className="avatar-user">U</div>
-              ) : (
-                <div className="avatar-ai">SA</div>
-              )}
+              <div className="avatar-ai">SA</div>
             </div>
             <div className="message-body">
-              <span className="message-role">{msg.role === 'user' ? 'You' : 'SuzuneiAyano-AI'}</span>
-              <div className="message-content">
-                {msg.imageUrl && (
-                  <div className="message-image">
-                    <img src={msg.imageUrl} alt="Uploaded" />
-                  </div>
+              <span className="message-role">Tool</span>
+              <div className="message-content tool-call">
+                {streamingTool.phase === 'call' ? '↳ calling' : '✓ result from'}{' '}
+                <code>{streamingTool.name}</code>
+                {streamingTool.phase === 'call' && streamingTool.args && (
+                  <pre className="tool-args">{JSON.stringify(streamingTool.args, null, 2)}</pre>
                 )}
-                <ReactMarkdown>{msg.content}</ReactMarkdown>
+                {streamingTool.phase === 'result' && (
+                  <pre className="tool-args">
+                    {(() => {
+                      const r = streamingTool.result;
+                      if (!r) return '';
+                      const s = JSON.stringify(r, null, 2);
+                      return s.length > 1500 ? s.slice(0, 1500) + '…' : s;
+                    })()}
+                  </pre>
+                )}
               </div>
             </div>
           </div>
-        ))}
+        )}
 
         {streamingContent && (
           <div className="message assistant">

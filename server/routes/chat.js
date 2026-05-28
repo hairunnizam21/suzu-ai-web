@@ -2,7 +2,8 @@ import { Router } from 'express';
 import OpenAI from 'openai';
 import { v4 as uuidv4 } from 'uuid';
 import { verifyAuth } from '../middleware/auth.js';
-import { getDB } from '../db.js';
+import { getDB, getUsage, addTokens, DEFAULT_DAILY_TOKEN_LIMIT } from '../db.js';
+import { AI_TOOLS, runToolCall } from '../utils/aiTools.js';
 
 export const chatRouter = Router();
 
@@ -10,16 +11,39 @@ export const chatRouter = Router();
 chatRouter.use(verifyAuth);
 
 const openai = new OpenAI({
-  apiKey: process.env.AI_API_KEY,
+  apiKey: process.env.AI_API_KEY || 'placeholder-key',
   baseURL: process.env.AI_API_BASE_URL || 'https://core.fiqstr.com/v1',
+});
+
+const DEFAULT_MODEL =
+  process.env.AI_DEFAULT_MODEL || 'fiqstr/claude-sonnet-4.6-thinking-agentic';
+
+const MAX_TOOL_ITERATIONS = 6;
+
+const SYSTEM_PROMPT = `You are SuzuneiAyano-AI, a helpful and intelligent assistant. Respond in the same language the user uses. Be concise and helpful. When analyzing images, describe what you see in detail.
+
+You have a set of APK tools available (apk_list_projects, apk_decompile, apk_list_files, apk_read_file, apk_edit_file, apk_recompile). When the user uploads an APK and asks you to inspect, modify, or rebuild it, use those tools step by step:
+1. If the user references "the APK" without giving an id, call apk_list_projects first.
+2. Call apk_decompile if the project is in 'uploaded' state.
+3. Use apk_list_files and apk_read_file to inspect what you need (AndroidManifest.xml, smali, res/values/strings.xml, etc.).
+4. Use apk_edit_file to apply the user's requested change.
+5. Call apk_recompile and share the download URL with the user.
+Avoid making changes the user did not ask for.`;
+
+// Get current user's daily token usage
+chatRouter.get('/usage', (req, res) => {
+  const usage = getUsage(req.user.uid);
+  res.json(usage);
 });
 
 // Get all conversations for a user
 chatRouter.get('/conversations', (req, res) => {
   const db = getDB();
-  const conversations = db.prepare(
-    'SELECT * FROM conversations WHERE user_id = ? ORDER BY updated_at DESC'
-  ).all(req.user.uid);
+  const conversations = db
+    .prepare(
+      'SELECT * FROM conversations WHERE user_id = ? ORDER BY updated_at DESC'
+    )
+    .all(req.user.uid);
   res.json({ conversations });
 });
 
@@ -27,7 +51,7 @@ chatRouter.get('/conversations', (req, res) => {
 chatRouter.post('/conversations', (req, res) => {
   const db = getDB();
   const id = uuidv4();
-  const model = req.body.model || process.env.AI_DEFAULT_MODEL || 'fiqstr/claude-opus-4.7-thinking-agentic';
+  const model = req.body.model || DEFAULT_MODEL;
 
   db.prepare(
     'INSERT INTO conversations (id, user_id, title, model) VALUES (?, ?, ?, ?)'
@@ -41,103 +65,209 @@ chatRouter.post('/conversations', (req, res) => {
 chatRouter.get('/conversations/:id/messages', (req, res) => {
   const db = getDB();
 
-  // Verify conversation belongs to user
-  const conversation = db.prepare(
-    'SELECT * FROM conversations WHERE id = ? AND user_id = ?'
-  ).get(req.params.id, req.user.uid);
+  const conversation = db
+    .prepare('SELECT * FROM conversations WHERE id = ? AND user_id = ?')
+    .get(req.params.id, req.user.uid);
 
   if (!conversation) {
     return res.status(404).json({ error: 'Conversation not found' });
   }
 
-  const messages = db.prepare(
-    'SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC'
-  ).all(req.params.id);
+  const messages = db
+    .prepare(
+      'SELECT id, role, content, image, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at ASC'
+    )
+    .all(req.params.id);
 
   res.json({ messages, conversation });
 });
 
-// Send message and get AI response (streaming)
+// Send message and get AI response (streaming, with optional tool calls)
 chatRouter.post('/conversations/:id/messages', async (req, res) => {
   const db = getDB();
   const { content, image } = req.body;
 
-  // Verify conversation belongs to user
-  const conversation = db.prepare(
-    'SELECT * FROM conversations WHERE id = ? AND user_id = ?'
-  ).get(req.params.id, req.user.uid);
+  const conversation = db
+    .prepare('SELECT * FROM conversations WHERE id = ? AND user_id = ?')
+    .get(req.params.id, req.user.uid);
 
   if (!conversation) {
     return res.status(404).json({ error: 'Conversation not found' });
   }
 
-  // Save user message
-  db.prepare(
-    'INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)'
-  ).run(req.params.id, 'user', content || '(image)');
-
-  // Get conversation history for API (text only)
-  const history = db.prepare(
-    'SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at ASC'
-  ).all(req.params.id);
-
-  // Build messages array for the AI
-  const apiMessages = [
-    { role: 'system', content: 'You are SuzuneiAyano-AI, a helpful and intelligent assistant. Respond in the same language the user uses. Be concise and helpful. When analyzing images, describe what you see in detail.' },
-  ];
-
-  // Add history (all previous messages as text)
-  for (const msg of history.slice(0, -1)) {
-    apiMessages.push({ role: msg.role, content: msg.content });
+  // Enforce daily token limit *before* incurring any tokens
+  const usageBefore = getUsage(req.user.uid);
+  if (usageBefore.tokens_used_today >= usageBefore.tokens_limit_daily) {
+    return res.status(429).json({
+      error: 'Daily token limit reached',
+      ...usageBefore,
+    });
   }
 
-  // Add current message (with image if provided)
+  // Save user message (with image data URL if provided)
+  db.prepare(
+    'INSERT INTO messages (conversation_id, role, content, image) VALUES (?, ?, ?, ?)'
+  ).run(req.params.id, 'user', content || '', image || null);
+
+  // Get conversation history for API
+  const history = db
+    .prepare(
+      'SELECT role, content, image FROM messages WHERE conversation_id = ? ORDER BY created_at ASC'
+    )
+    .all(req.params.id);
+
+  const apiMessages = [{ role: 'system', content: SYSTEM_PROMPT }];
+
+  // All history *except* the just-saved current message (we'll add it below)
+  for (const msg of history.slice(0, -1)) {
+    if (msg.image && msg.role === 'user') {
+      apiMessages.push({
+        role: 'user',
+        content: [
+          ...(msg.content ? [{ type: 'text', text: msg.content }] : []),
+          { type: 'image_url', image_url: { url: msg.image } },
+        ],
+      });
+    } else {
+      apiMessages.push({ role: msg.role, content: msg.content });
+    }
+  }
+
+  // Add current message
   if (image) {
     const userContent = [];
-    if (content) {
-      userContent.push({ type: 'text', text: content });
-    }
-    const base64Data = image.includes(',') ? image.split(',')[1] : image;
-    const mimeMatch = image.match(/^data:(image\/\w+);/);
-    const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
-    userContent.push({
-      type: 'image_url',
-      image_url: { url: `data:${mimeType};base64,${base64Data}` },
-    });
+    if (content) userContent.push({ type: 'text', text: content });
+    userContent.push({ type: 'image_url', image_url: { url: image } });
     apiMessages.push({ role: 'user', content: userContent });
   } else {
-    apiMessages.push({ role: 'user', content: content });
+    apiMessages.push({ role: 'user', content });
   }
 
-  // Set up SSE for streaming
+  // Set up SSE
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  const writeEvent = (obj) => {
+    res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  };
+
+  let finalAssistantContent = '';
 
   try {
-    const stream = await openai.chat.completions.create({
-      model: conversation.model || process.env.AI_DEFAULT_MODEL || 'fiqstr/claude-opus-4.7-thinking-agentic',
-      messages: apiMessages,
-      stream: true,
-    });
+    for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+      const stream = await openai.chat.completions.create({
+        model: conversation.model || DEFAULT_MODEL,
+        messages: apiMessages,
+        tools: AI_TOOLS,
+        stream: true,
+        stream_options: { include_usage: true },
+      });
 
-    let fullResponse = '';
+      let contentSoFar = '';
+      const toolCallsByIndex = {};
+      let finishReason = null;
+      let usage = null;
 
-    for await (const chunk of stream) {
-      const delta = chunk.choices[0]?.delta?.content || '';
-      if (delta) {
-        fullResponse += delta;
-        res.write(`data: ${JSON.stringify({ content: delta })}\n\n`);
+      for await (const chunk of stream) {
+        if (chunk.usage) usage = chunk.usage;
+        const choice = chunk.choices?.[0];
+        if (!choice) continue;
+        const delta = choice.delta || {};
+        if (choice.finish_reason) finishReason = choice.finish_reason;
+
+        if (delta.content) {
+          contentSoFar += delta.content;
+          writeEvent({ content: delta.content });
+        }
+
+        if (Array.isArray(delta.tool_calls)) {
+          for (const tc of delta.tool_calls) {
+            const idx = tc.index ?? 0;
+            if (!toolCallsByIndex[idx]) {
+              toolCallsByIndex[idx] = {
+                id: tc.id || '',
+                type: 'function',
+                function: { name: '', arguments: '' },
+              };
+            }
+            if (tc.id) toolCallsByIndex[idx].id = tc.id;
+            if (tc.function?.name) toolCallsByIndex[idx].function.name += tc.function.name;
+            if (tc.function?.arguments) {
+              toolCallsByIndex[idx].function.arguments += tc.function.arguments;
+            }
+          }
+        }
       }
+
+      if (usage?.total_tokens) {
+        addTokens(req.user.uid, usage.total_tokens);
+      }
+
+      if (finishReason === 'tool_calls') {
+        const toolCallsArr = Object.values(toolCallsByIndex);
+
+        // Add the assistant turn (with tool_calls) to the message history
+        apiMessages.push({
+          role: 'assistant',
+          content: contentSoFar || null,
+          tool_calls: toolCallsArr.map((tc) => ({
+            id: tc.id,
+            type: 'function',
+            function: { name: tc.function.name, arguments: tc.function.arguments },
+          })),
+        });
+
+        // Execute each tool call and append a "tool" message
+        for (const tc of toolCallsArr) {
+          let parsedArgs = {};
+          try {
+            parsedArgs = tc.function.arguments ? JSON.parse(tc.function.arguments) : {};
+          } catch {
+            parsedArgs = {};
+          }
+          writeEvent({
+            event: 'tool_call',
+            tool_call_id: tc.id,
+            name: tc.function.name,
+            arguments: parsedArgs,
+          });
+          const result = await runToolCall(req.user.uid, tc.function.name, parsedArgs);
+          writeEvent({
+            event: 'tool_result',
+            tool_call_id: tc.id,
+            name: tc.function.name,
+            result,
+          });
+          // Tool result fed back to the AI (truncated for safety)
+          const resultStr = JSON.stringify(result);
+          apiMessages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: resultStr.length > 16000 ? resultStr.slice(0, 16000) + '…[truncated]' : resultStr,
+          });
+        }
+
+        // Continue the loop so the model can produce a follow-up response
+        continue;
+      }
+
+      // No more tool calls — this was the final text answer
+      finalAssistantContent = contentSoFar;
+      break;
     }
 
-    // Save assistant response
+    // Persist the final assistant message
     db.prepare(
       'INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)'
-    ).run(req.params.id, 'assistant', fullResponse);
+    ).run(req.params.id, 'assistant', finalAssistantContent || '');
 
-    // Update conversation title if first message
-    if (history.length === 1) {
+    // Update conversation title from the first user message if needed
+    const userMessagesCount = db
+      .prepare("SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ? AND role = 'user'")
+      .get(req.params.id).n;
+    if (userMessagesCount === 1 && content) {
       const title = content.length > 50 ? content.substring(0, 50) + '...' : content;
       db.prepare(
         'UPDATE conversations SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
@@ -148,11 +278,13 @@ chatRouter.post('/conversations/:id/messages', async (req, res) => {
       ).run(req.params.id);
     }
 
+    const usageAfter = getUsage(req.user.uid);
+    writeEvent({ event: 'usage', ...usageAfter });
     res.write('data: [DONE]\n\n');
     res.end();
   } catch (error) {
     console.error('AI API error:', error);
-    res.write(`data: ${JSON.stringify({ error: error.message || 'AI request failed' })}\n\n`);
+    writeEvent({ error: error?.message || 'AI request failed' });
     res.end();
   }
 });
@@ -161,9 +293,9 @@ chatRouter.post('/conversations/:id/messages', async (req, res) => {
 chatRouter.delete('/conversations/:id', (req, res) => {
   const db = getDB();
 
-  const conversation = db.prepare(
-    'SELECT * FROM conversations WHERE id = ? AND user_id = ?'
-  ).get(req.params.id, req.user.uid);
+  const conversation = db
+    .prepare('SELECT * FROM conversations WHERE id = ? AND user_id = ?')
+    .get(req.params.id, req.user.uid);
 
   if (!conversation) {
     return res.status(404).json({ error: 'Conversation not found' });
@@ -173,4 +305,10 @@ chatRouter.delete('/conversations/:id', (req, res) => {
   db.prepare('DELETE FROM conversations WHERE id = ?').run(req.params.id);
 
   res.json({ success: true });
+});
+
+// Allow user to view their daily limit (for client side display)
+chatRouter.get('/limits', (req, res) => {
+  const usage = getUsage(req.user.uid);
+  res.json({ ...usage, default_limit: DEFAULT_DAILY_TOKEN_LIMIT });
 });

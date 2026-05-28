@@ -8,10 +8,12 @@ import {
   sendMessage,
   deleteConversation,
   fetchModels,
+  fetchUsage,
 } from './api';
 import LoginPage from './components/LoginPage';
 import Sidebar from './components/Sidebar';
 import ChatWindow from './components/ChatWindow';
+import ApkTools from './components/ApkTools';
 import './App.css';
 
 function App() {
@@ -22,10 +24,12 @@ function App() {
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
+  const [streamingTool, setStreamingTool] = useState(null);
   const [models, setModels] = useState([]);
-  const [selectedModel, setSelectedModel] = useState('fiqstr/claude-opus-4.7-thinking-agentic');
+  const [selectedModel, setSelectedModel] = useState('fiqstr/claude-sonnet-4.6-thinking-agentic');
+  const [view, setView] = useState('chat'); // 'chat' | 'apk'
+  const [usage, setUsage] = useState(null);
 
-  // Listen for auth state changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
@@ -34,13 +38,22 @@ function App() {
     return () => unsubscribe();
   }, []);
 
-  // Load conversations and models when user logs in
+  const loadUsage = useCallback(async () => {
+    try {
+      const u = await fetchUsage();
+      setUsage(u);
+    } catch (err) {
+      console.error('Failed to load usage:', err);
+    }
+  }, []);
+
   useEffect(() => {
     if (user) {
       loadConversations();
       loadModels();
+      loadUsage();
     }
-  }, [user]);
+  }, [user, loadUsage]);
 
   const loadConversations = async () => {
     try {
@@ -101,48 +114,70 @@ function App() {
   };
 
   const sendAndStream = async (convId, content, imageFile) => {
-    let imageUrl = null;
     let imageBase64 = null;
     if (imageFile) {
       imageBase64 = await fileToBase64(imageFile);
-      imageUrl = imageBase64;
     }
 
-    const userMsg = { role: 'user', content: content || '(image)', imageUrl };
+    const userMsg = { role: 'user', content: content || '', image: imageBase64 || null };
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
     setStreamingContent('');
+    setStreamingTool(null);
 
     let fullResponse = '';
 
     try {
-      await sendMessage(convId, content, (chunk) => {
-        fullResponse += chunk;
-        setStreamingContent(fullResponse);
-      }, imageBase64);
+      await sendMessage(
+        convId,
+        content,
+        (event) => {
+          if (event.content) {
+            fullResponse += event.content;
+            setStreamingContent(fullResponse);
+          }
+          if (event.event === 'tool_call') {
+            setStreamingTool({ phase: 'call', name: event.name, args: event.arguments });
+          }
+          if (event.event === 'tool_result') {
+            setStreamingTool({ phase: 'result', name: event.name, result: event.result });
+          }
+          if (event.event === 'usage') {
+            setUsage(event);
+          }
+          if (event.error) {
+            throw new Error(event.error);
+          }
+        },
+        imageBase64
+      );
 
       setMessages((prev) => [...prev, { role: 'assistant', content: fullResponse }]);
       setStreamingContent('');
+      setStreamingTool(null);
       loadConversations();
+      loadUsage();
     } catch (err) {
       console.error('Send failed:', err);
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: 'Sorry, something went wrong. Please try again.' },
-      ]);
+      const msg =
+        err.status === 429
+          ? 'Daily token limit reached. Try again tomorrow.'
+          : err.message || 'Sorry, something went wrong. Please try again.';
+      setMessages((prev) => [...prev, { role: 'assistant', content: msg }]);
       setStreamingContent('');
+      setStreamingTool(null);
+      loadUsage();
     } finally {
       setIsLoading(false);
     }
   };
 
-  const fileToBase64 = (file) => {
-    return new Promise((resolve) => {
+  const fileToBase64 = (file) =>
+    new Promise((resolve) => {
       const reader = new FileReader();
       reader.onloadend = () => resolve(reader.result);
       reader.readAsDataURL(file);
     });
-  };
 
   const handleDelete = async (convId) => {
     try {
@@ -183,24 +218,38 @@ function App() {
       <Sidebar
         conversations={conversations}
         activeId={activeConvId}
-        onSelect={handleSelectConversation}
-        onNew={handleNewChat}
+        onSelect={(id) => {
+          setView('chat');
+          handleSelectConversation(id);
+        }}
+        onNew={() => {
+          setView('chat');
+          handleNewChat();
+        }}
         onDelete={handleDelete}
         user={user}
         onLogout={handleLogout}
         models={models}
         selectedModel={selectedModel}
         onModelChange={setSelectedModel}
+        view={view}
+        onViewChange={setView}
+        usage={usage}
       />
       <main className="main-content">
-        <ChatWindow
-          messages={messages}
-          onSend={handleSend}
-          isLoading={isLoading}
-          streamingContent={streamingContent}
-          selectedModel={selectedModel}
-          models={models}
-        />
+        {view === 'chat' ? (
+          <ChatWindow
+            messages={messages}
+            onSend={handleSend}
+            isLoading={isLoading}
+            streamingContent={streamingContent}
+            streamingTool={streamingTool}
+            selectedModel={selectedModel}
+            models={models}
+          />
+        ) : (
+          <ApkTools />
+        )}
       </main>
     </div>
   );

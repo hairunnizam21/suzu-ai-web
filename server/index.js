@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { chatRouter } from './routes/chat.js';
 import { authRouter } from './routes/auth.js';
 import { modelsRouter } from './routes/models.js';
+import { apkRouter } from './routes/apk.js';
 import { initDB } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -19,6 +20,7 @@ app.use(express.json({ limit: '20mb' }));
 app.use('/api/auth', authRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/models', modelsRouter);
+app.use('/api/apk', apkRouter);
 
 // Serve frontend in production
 if (process.env.NODE_ENV === 'production') {
