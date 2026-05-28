@@ -1,6 +1,20 @@
 import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 
+// Some "thinking-agentic" models leak <thinking>...</thinking> blocks in the stream.
+// Hide them from the rendered chat. Works for both finished messages and partial
+// streaming content (handles a half-open <thinking> tag at the end of the buffer).
+function stripThinking(text) {
+  if (!text) return text;
+  let out = text.replace(/<thinking\b[^>]*>[\s\S]*?<\/thinking>/gi, '');
+  // If a <thinking> opened but hasn't closed yet (streaming), drop everything from it onward.
+  const openIdx = out.search(/<thinking\b[^>]*>/i);
+  if (openIdx !== -1) out = out.slice(0, openIdx);
+  // Also strip stray tags if the close arrives before the open (defensive).
+  out = out.replace(/<\/?thinking\b[^>]*>/gi, '');
+  return out.replace(/\n{3,}/g, '\n\n').trimStart();
+}
+
 export default function ChatWindow({ messages, onSend, onSendApk, isLoading, streamingContent, streamingTool, selectedModel, models, user }) {
   const [input, setInput] = useState('');
   const [imageFile, setImageFile] = useState(null);
@@ -153,7 +167,7 @@ export default function ChatWindow({ messages, onSend, onSendApk, isLoading, str
                       <img src={imgSrc} alt="Uploaded" />
                     </div>
                   )}
-                  {msg.content && <ReactMarkdown>{msg.content}</ReactMarkdown>}
+                  {msg.content && (() => { const cleaned = stripThinking(msg.content); return cleaned ? <ReactMarkdown>{cleaned}</ReactMarkdown> : null; })()}
                 </div>
               </div>
             </div>
@@ -188,22 +202,26 @@ export default function ChatWindow({ messages, onSend, onSendApk, isLoading, str
           </div>
         )}
 
-        {streamingContent && (
-          <div className="message assistant streaming">
-            <div className="message-avatar">
-              <div className="avatar-ai pulse">SA</div>
-            </div>
-            <div className="message-body">
-              <span className="message-role">SuzuneiAyano-AI</span>
-              <div className="message-content">
-                <ReactMarkdown>{streamingContent}</ReactMarkdown>
-                <span className="typing-cursor" />
+        {(() => {
+          const visible = stripThinking(streamingContent);
+          if (!visible) return null;
+          return (
+            <div className="message assistant streaming">
+              <div className="message-avatar">
+                <div className="avatar-ai pulse">SA</div>
+              </div>
+              <div className="message-body">
+                <span className="message-role">SuzuneiAyano-AI</span>
+                <div className="message-content">
+                  <ReactMarkdown>{visible}</ReactMarkdown>
+                  <span className="typing-cursor" />
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
-        {isLoading && !streamingContent && (
+        {isLoading && !stripThinking(streamingContent) && (
           <div className="message assistant">
             <div className="message-avatar">
               <div className="avatar-ai">SA</div>
