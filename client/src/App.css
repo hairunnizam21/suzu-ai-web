@@ -3,9 +3,9 @@
   --bg-secondary: #171717;
   --bg-tertiary: #1e1e1e;
   --bg-chat: #0d0d0d;
-  --text-primary: #ececec;
-  --text-secondary: #8e8e8e;
-  --text-muted: #555;
+  --text-primary: #ededed;
+  --text-secondary: #9a9a9a;
+  --text-muted: #6a6a6a;
   --accent: #7c6ef0;
   --accent-hover: #9b8afb;
   --accent-subtle: rgba(124, 110, 240, 0.12);
@@ -22,6 +22,10 @@
   box-sizing: border-box;
 }
 
+html { font-size: 15px; }
+@media (max-width: 900px) { html { font-size: 14px; } }
+@media (max-width: 600px) { html { font-size: 13.5px; } }
+
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--bg-primary);
@@ -29,6 +33,16 @@ body {
   overflow: hidden;
   height: 100vh;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'cv11', 'ss01', 'kern' 1;
+  font-variant-ligatures: common-ligatures;
+  letter-spacing: -0.005em;
+}
+
+code, kbd, pre, samp {
+  font-family: 'JetBrains Mono', 'SF Mono', 'Menlo', 'Consolas', monospace;
+  font-variant-ligatures: contextual;
 }
 
 #root {
@@ -602,16 +616,18 @@ body {
 
 .message-role {
   display: block;
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 600;
-  margin-bottom: 4px;
+  margin-bottom: 3px;
   color: var(--text-secondary);
+  letter-spacing: 0.01em;
 }
 
 .message-content {
-  line-height: 1.65;
+  line-height: 1.6;
   overflow-wrap: break-word;
-  font-size: 0.92rem;
+  font-size: 0.88rem;
+  letter-spacing: -0.005em;
 }
 
 .message-content p {
