@@ -14,8 +14,9 @@ export async function fetchConversations() {
   const res = await fetch(`${API_BASE}/chat/conversations`, {
     headers: await authHeaders(),
   });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
   const data = await res.json();
-  return data.conversations;
+  return data.conversations || [];
 }
 
 export async function createConversation(model) {
@@ -24,6 +25,7 @@ export async function createConversation(model) {
     headers: await authHeaders(),
     body: JSON.stringify({ model }),
   });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
   const data = await res.json();
   return data.conversation;
 }
@@ -32,6 +34,7 @@ export async function fetchMessages(conversationId) {
   const res = await fetch(`${API_BASE}/chat/conversations/${conversationId}/messages`, {
     headers: await authHeaders(),
   });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
   const data = await res.json();
   return data;
 }
@@ -46,6 +49,11 @@ export async function sendMessage(conversationId, content, onChunk) {
     },
     body: JSON.stringify({ content }),
   });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || `API error: ${res.status}`);
+  }
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -86,6 +94,7 @@ export async function fetchModels() {
   const res = await fetch(`${API_BASE}/models`, {
     headers: await authHeaders(),
   });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
   const data = await res.json();
-  return data.models;
+  return data.models || [];
 }
