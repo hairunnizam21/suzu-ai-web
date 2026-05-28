@@ -80,7 +80,7 @@ export function pickToken(requestedModel) {
     const row = rows[0];
     return {
       client: clientFromRow(row),
-      model: requestedModel || row.model,
+      model: requestedModel || row.model.split(',')[0].trim(),
       tokenId: row.id,
     };
   }
@@ -113,7 +113,7 @@ export async function createChatWithFailover(params) {
 
   for (const row of candidates) {
     const client = row ? clientFromRow(row) : clientFromEnv();
-    const model = params.model || (row ? row.model : null) ||
+    const model = params.model || (row ? row.model.split(',')[0].trim() : null) ||
       process.env.AI_DEFAULT_MODEL || 'fiqstr/claude-sonnet-4.6-thinking-agentic';
     const tokenId = row ? row.id : null;
 
