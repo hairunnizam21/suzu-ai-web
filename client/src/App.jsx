@@ -23,7 +23,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
   const [models, setModels] = useState([]);
-  const [selectedModel, setSelectedModel] = useState('fiqstr/claude-sonnet-4.6');
+  const [selectedModel, setSelectedModel] = useState('fiqstr/claude-opus-4.7-thinking-agentic');
 
   // Listen for auth state changes
   useEffect(() => {

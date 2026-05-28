@@ -27,7 +27,7 @@ chatRouter.get('/conversations', (req, res) => {
 chatRouter.post('/conversations', (req, res) => {
   const db = getDB();
   const id = uuidv4();
-  const model = req.body.model || process.env.AI_DEFAULT_MODEL || 'fiqstr/claude-sonnet-4.6';
+  const model = req.body.model || process.env.AI_DEFAULT_MODEL || 'fiqstr/claude-opus-4.7-thinking-agentic';
 
   db.prepare(
     'INSERT INTO conversations (id, user_id, title, model) VALUES (?, ?, ?, ?)'
@@ -88,7 +88,7 @@ chatRouter.post('/conversations/:id/messages', async (req, res) => {
 
   try {
     const stream = await openai.chat.completions.create({
-      model: conversation.model || process.env.AI_DEFAULT_MODEL || 'fiqstr/claude-sonnet-4.6',
+      model: conversation.model || process.env.AI_DEFAULT_MODEL || 'fiqstr/claude-opus-4.7-thinking-agentic',
       messages: [
         { role: 'system', content: 'You are Suzu AI, a helpful and intelligent assistant. Respond in the same language the user uses. Be concise and helpful.' },
         ...history,
