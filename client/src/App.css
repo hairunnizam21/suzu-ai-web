@@ -1337,6 +1337,16 @@ code, kbd, pre, samp {
   font-size: 0.85rem;
 }
 
+.attach-error {
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  border-radius: 8px;
+  background: rgba(226, 85, 74, 0.08);
+  border: 1px solid rgba(226, 85, 74, 0.4);
+  color: #f08a7a;
+  font-size: 0.78rem;
+}
+
 @media (max-width: 768px) {
   .apk-sidebar { width: 100%; max-width: 280px; }
   .apk-workspace { flex-direction: column; }

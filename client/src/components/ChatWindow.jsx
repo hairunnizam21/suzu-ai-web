@@ -20,10 +20,12 @@ export default function ChatWindow({ messages, onSend, onSendApk, isLoading, str
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [apkFile, setApkFile] = useState(null);
+  // Generic text-ish attachment (.txt, .json, .md, .smali, source files, logs, etc.)
+  const [textAttach, setTextAttach] = useState(null); // { name, size, content }
+  const [attachError, setAttachError] = useState('');
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
-  const apkInputRef = useRef(null);
   const textareaRef = useRef(null);
 
   useEffect(() => {
@@ -39,17 +41,27 @@ export default function ChatWindow({ messages, onSend, onSendApk, isLoading, str
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if ((!input.trim() && !imageFile && !apkFile) || isLoading) return;
+    if ((!input.trim() && !imageFile && !apkFile && !textAttach) || isLoading) return;
     if (apkFile) {
       onSendApk?.(apkFile, input.trim());
       setApkFile(null);
-      if (apkInputRef.current) apkInputRef.current.value = '';
+    } else if (textAttach) {
+      // Inline the text file as a fenced block in the user message so the AI
+      // can read it without any extra round trip.
+      const note = input.trim();
+      const lang = languageFromName(textAttach.name);
+      const block = `Attached file: \`${textAttach.name}\` (${formatBytes(textAttach.size)})\n\n\`\`\`${lang}\n${textAttach.content}\n\`\`\``;
+      const merged = note ? `${note}\n\n${block}` : block;
+      onSend(merged, null);
+      setTextAttach(null);
     } else {
       onSend(input.trim(), imageFile);
     }
     setInput('');
     setImageFile(null);
     setImagePreview(null);
+    setAttachError('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
   };
 
@@ -60,39 +72,53 @@ export default function ChatWindow({ messages, onSend, onSendApk, isLoading, str
     }
   };
 
-  const handleImageSelect = (e) => {
-    const file = e.target.files[0];
+  // Single attach handler — branches on file type so the chat input accepts
+  // anything the user has on their phone/laptop: images, APKs, text/code files.
+  const handleAttach = async (e) => {
+    const file = e.target.files?.[0];
     if (!file) return;
-    setImageFile(file);
-    const reader = new FileReader();
-    reader.onloadend = () => setImagePreview(reader.result);
-    reader.readAsDataURL(file);
+    setAttachError('');
+    const lower = (file.name || '').toLowerCase();
+    const isApk = lower.endsWith('.apk') || lower.endsWith('.xapk');
+    const isImage = (file.type || '').startsWith('image/');
+    const isTextish = isLikelyTextFile(file);
+
+    if (isApk) {
+      setApkFile(file);
+      setImageFile(null);
+      setImagePreview(null);
+      setTextAttach(null);
+    } else if (isImage) {
+      setImageFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => setImagePreview(reader.result);
+      reader.readAsDataURL(file);
+      setApkFile(null);
+      setTextAttach(null);
+    } else if (isTextish) {
+      const MAX_TEXT_BYTES = 1024 * 1024; // 1 MB cap so we don't blow the context
+      if (file.size > MAX_TEXT_BYTES) {
+        setAttachError(`Fail teks terlalu besar (${formatBytes(file.size)}). Maksimum ${formatBytes(MAX_TEXT_BYTES)}.`);
+        e.target.value = '';
+        return;
+      }
+      const content = await file.text();
+      setTextAttach({ name: file.name, size: file.size, content });
+      setApkFile(null);
+      setImageFile(null);
+      setImagePreview(null);
+    } else {
+      setAttachError(`Jenis fail tidak disokong: ${file.name}. Cuba imej, .apk, atau fail teks (.txt/.json/.xml/.md/.csv/.log/source code).`);
+    }
+    e.target.value = '';
   };
 
   const removeImage = () => {
     setImageFile(null);
     setImagePreview(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
   };
-
-  const handleApkSelect = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const lower = (file.name || '').toLowerCase();
-    if (!lower.endsWith('.apk') && !lower.endsWith('.xapk')) {
-      alert('Sila pilih fail .apk atau .xapk');
-      e.target.value = '';
-      return;
-    }
-    setApkFile(file);
-    setImageFile(null);
-    setImagePreview(null);
-  };
-
-  const removeApk = () => {
-    setApkFile(null);
-    if (apkInputRef.current) apkInputRef.current.value = '';
-  };
+  const removeApk = () => setApkFile(null);
+  const removeTextAttach = () => setTextAttach(null);
 
   const modelName = models?.find(m => m.id === selectedModel)?.name || 'AI';
   const userInitial = (user?.displayName || user?.email || 'U')[0]?.toUpperCase();
@@ -253,44 +279,38 @@ export default function ChatWindow({ messages, onSend, onSendApk, isLoading, str
             <div className="apk-attached-chip">
               <span className="apk-attached-icon">📦</span>
               <span className="apk-attached-name">{apkFile.name}</span>
-              <span className="apk-attached-size">{(apkFile.size / 1024 / 1024).toFixed(2)} MB</span>
+              <span className="apk-attached-size">{formatBytes(apkFile.size)}</span>
               <button className="image-remove-btn" onClick={removeApk}>&times;</button>
             </div>
           </div>
         )}
+        {textAttach && (
+          <div className="image-preview-bar">
+            <div className="apk-attached-chip">
+              <span className="apk-attached-icon">📄</span>
+              <span className="apk-attached-name">{textAttach.name}</span>
+              <span className="apk-attached-size">{formatBytes(textAttach.size)}</span>
+              <button className="image-remove-btn" onClick={removeTextAttach}>&times;</button>
+            </div>
+          </div>
+        )}
+        {attachError && <div className="attach-error">{attachError}</div>}
         <form className="chat-input-form" onSubmit={handleSubmit}>
           <button
             type="button"
             className="attach-btn"
             onClick={() => fileInputRef.current?.click()}
-            title="Upload image"
+            title="Lampir fail (imej, APK, teks, kod)"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-              <circle cx="8.5" cy="8.5" r="1.5"/>
-              <polyline points="21 15 16 10 5 21"/>
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66L9.41 17.41a2 2 0 0 1-2.83-2.83l8.49-8.49" />
             </svg>
-          </button>
-          <button
-            type="button"
-            className="attach-btn"
-            onClick={() => apkInputRef.current?.click()}
-            title="Attach APK for analysis"
-          >
-            <span style={{ fontSize: 18, lineHeight: 1 }}>📦</span>
           </button>
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
-            onChange={handleImageSelect}
-            style={{ display: 'none' }}
-          />
-          <input
-            ref={apkInputRef}
-            type="file"
-            accept=".apk,.xapk,application/vnd.android.package-archive"
-            onChange={handleApkSelect}
+            accept="image/*,.apk,.xapk,application/vnd.android.package-archive,.txt,.md,.json,.xml,.yaml,.yml,.csv,.tsv,.log,.conf,.ini,.toml,.smali,.java,.kt,.kts,.js,.jsx,.ts,.tsx,.py,.rb,.go,.rs,.c,.cc,.cpp,.h,.hpp,.cs,.php,.sh,.bash,.zsh,.ps1,.html,.htm,.css,.scss,.less,.sql,.gradle,.pro,.properties,.env"
+            onChange={handleAttach}
             style={{ display: 'none' }}
           />
           <textarea
@@ -298,11 +318,15 @@ export default function ChatWindow({ messages, onSend, onSendApk, isLoading, str
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={apkFile ? `Analisis APK: ${apkFile.name}… (boleh tambah nota)` : 'Message SuzuneiAyano-AI...'}
+            placeholder={
+              apkFile ? `Analisis APK: ${apkFile.name}… (boleh tambah nota)`
+              : textAttach ? `Soalan tentang ${textAttach.name}…`
+              : 'Message SuzuneiAyano-AI...'
+            }
             rows={1}
             disabled={isLoading}
           />
-          <button type="submit" className="send-btn" disabled={(!input.trim() && !imageFile && !apkFile) || isLoading}>
+          <button type="submit" className="send-btn" disabled={(!input.trim() && !imageFile && !apkFile && !textAttach) || isLoading}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
               <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
             </svg>
@@ -331,4 +355,43 @@ function computeAiStatus({ isLoading, streamingContent, streamingTool }) {
   }
   if (streamingContent) return { icon: '⌨️', label: 'Typing', tone: 'busy' };
   return { icon: '💭', label: 'Thinking', tone: 'busy' };
+}
+
+function formatBytes(n) {
+  if (n == null) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+
+const TEXT_EXTS = new Set([
+  'txt', 'md', 'markdown', 'log', 'csv', 'tsv', 'json', 'jsonc', 'xml', 'yaml', 'yml',
+  'toml', 'ini', 'conf', 'cfg', 'env', 'properties', 'smali', 'java', 'kt', 'kts',
+  'js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs', 'py', 'rb', 'go', 'rs', 'c', 'cc', 'cpp',
+  'cxx', 'h', 'hpp', 'cs', 'php', 'sh', 'bash', 'zsh', 'ps1', 'html', 'htm', 'css',
+  'scss', 'sass', 'less', 'sql', 'gradle', 'pro', 'lua', 'swift', 'dart', 'm', 'mm',
+  'r', 'pl', 'rmd', 'tex', 'svg',
+]);
+function isLikelyTextFile(file) {
+  if ((file.type || '').startsWith('text/')) return true;
+  const name = file.name || '';
+  const dot = name.lastIndexOf('.');
+  if (dot < 0) return false;
+  return TEXT_EXTS.has(name.slice(dot + 1).toLowerCase());
+}
+function languageFromName(name) {
+  const dot = (name || '').lastIndexOf('.');
+  if (dot < 0) return '';
+  const ext = name.slice(dot + 1).toLowerCase();
+  const map = {
+    md: 'markdown', markdown: 'markdown',
+    js: 'javascript', mjs: 'javascript', cjs: 'javascript',
+    ts: 'typescript', tsx: 'tsx', jsx: 'jsx',
+    py: 'python', rb: 'ruby', kt: 'kotlin', kts: 'kotlin',
+    sh: 'bash', bash: 'bash', zsh: 'bash', ps1: 'powershell',
+    yml: 'yaml',
+    htm: 'html',
+    gradle: 'groovy',
+  };
+  return map[ext] || ext;
 }

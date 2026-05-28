@@ -37,8 +37,6 @@ export default function Sidebar({
   models,
   selectedModel,
   onModelChange,
-  view,
-  onViewChange,
   usage,
   plan,
   planExpiresAt,
@@ -56,68 +54,41 @@ export default function Sidebar({
             <span className="logo-icon">⚡</span>
             <span>Suzu AI</span>
           </div>
-          {view === 'chat' && (
-            <button className="new-chat-btn" onClick={onNew} title="New chat">
-              +
-            </button>
-          )}
-        </div>
-
-        <div className="view-tabs">
-          <button
-            className={`view-tab ${view === 'chat' ? 'active' : ''}`}
-            onClick={() => onViewChange?.('chat')}
-          >
-            💬 Chat
-          </button>
-          <button
-            className={`view-tab ${view === 'apk' ? 'active' : ''}`}
-            onClick={() => onViewChange?.('apk')}
-          >
-            📦 APK Tools
+          <button className="new-chat-btn" onClick={onNew} title="New chat">
+            +
           </button>
         </div>
 
         <UsageBar usage={usage} />
 
-        {view === 'chat' && (
-          <>
-            <div className="model-selector">
-              <label>Model</label>
-              <select value={selectedModel} onChange={(e) => onModelChange(e.target.value)}>
-                {models.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+        <div className="model-selector">
+          <label>Model</label>
+          <select value={selectedModel} onChange={(e) => onModelChange(e.target.value)}>
+            {models.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </div>
 
-            <div className="conversation-list">
-              {conversations.map((conv) => (
-                <ConversationItem
-                  key={conv.id}
-                  conv={conv}
-                  active={conv.id === activeId}
-                  onSelect={() => {
-                    onSelect(conv.id);
-                    setSidebarOpen(false);
-                  }}
-                  onDelete={() => onDelete(conv.id)}
-                />
-              ))}
-              {conversations.length === 0 && (
-                <div className="conv-empty">Belum ada chat. Tekan + untuk mula.</div>
-              )}
-            </div>
-          </>
-        )}
-
-        {view === 'apk' && (
-          <div className="apk-sidebar-hint">
-            <p>Drop APK di kanan, atau minta AI dalam chat untuk decompile/edit/recompile APK.</p>
-          </div>
-        )}
+        <div className="conversation-list">
+          {conversations.map((conv) => (
+            <ConversationItem
+              key={conv.id}
+              conv={conv}
+              active={conv.id === activeId}
+              onSelect={() => {
+                onSelect(conv.id);
+                setSidebarOpen(false);
+              }}
+              onDelete={() => onDelete(conv.id)}
+            />
+          ))}
+          {conversations.length === 0 && (
+            <div className="conv-empty">Belum ada chat. Tekan + untuk mula.</div>
+          )}
+        </div>
 
         <ProfileCard
           user={user}

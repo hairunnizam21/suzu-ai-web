@@ -16,7 +16,6 @@ import {
 import LoginPage from './components/LoginPage';
 import Sidebar from './components/Sidebar';
 import ChatWindow from './components/ChatWindow';
-import ApkTools from './components/ApkTools';
 import './App.css';
 
 function App() {
@@ -30,7 +29,6 @@ function App() {
   const [streamingTool, setStreamingTool] = useState(null);
   const [models, setModels] = useState([]);
   const [selectedModel, setSelectedModel] = useState('fiqstr/claude-sonnet-4.6-thinking-agentic');
-  const [view, setView] = useState('chat'); // 'chat' | 'apk'
   const [usage, setUsage] = useState(null);
   const [plan, setPlan] = useState('free');
   const [planExpiresAt, setPlanExpiresAt] = useState(null);
@@ -298,42 +296,30 @@ function App() {
       <Sidebar
         conversations={conversations}
         activeId={activeConvId}
-        onSelect={(id) => {
-          setView('chat');
-          handleSelectConversation(id);
-        }}
-        onNew={() => {
-          setView('chat');
-          handleNewChat();
-        }}
+        onSelect={handleSelectConversation}
+        onNew={handleNewChat}
         onDelete={handleDelete}
         user={user}
         onLogout={handleLogout}
         models={models}
         selectedModel={selectedModel}
         onModelChange={setSelectedModel}
-        view={view}
-        onViewChange={setView}
         usage={usage}
         plan={plan}
         planExpiresAt={planExpiresAt}
       />
       <main className="main-content">
-        {view === 'chat' ? (
-          <ChatWindow
-            messages={messages}
-            onSend={handleSend}
-            onSendApk={handleSendApk}
-            isLoading={isLoading}
-            streamingContent={streamingContent}
-            streamingTool={streamingTool}
-            selectedModel={selectedModel}
-            models={models}
-            user={user}
-          />
-        ) : (
-          <ApkTools />
-        )}
+        <ChatWindow
+          messages={messages}
+          onSend={handleSend}
+          onSendApk={handleSendApk}
+          isLoading={isLoading}
+          streamingContent={streamingContent}
+          streamingTool={streamingTool}
+          selectedModel={selectedModel}
+          models={models}
+          user={user}
+        />
       </main>
     </div>
   );
