@@ -105,6 +105,9 @@ function App() {
 
   const handleSelectConversation = useCallback(async (convId) => {
     setActiveConvId(convId);
+    setStreamingContent('');
+    setStreamingTool(null);
+    setIsLoading(false);
     try {
       const data = await fetchMessages(convId);
       setMessages(data.messages);
@@ -117,6 +120,9 @@ function App() {
   }, []);
 
   const handleNewChat = async () => {
+    setStreamingContent('');
+    setStreamingTool(null);
+    setIsLoading(false);
     try {
       const conv = await createConversation(selectedModel);
       setConversations((prev) => [conv, ...prev]);
@@ -238,9 +244,11 @@ function App() {
     } catch (err) {
       console.error('Send failed:', err);
       const msg =
-        err.status === 429
-          ? 'Daily token limit reached. Try again tomorrow.'
-          : err.message || 'Sorry, something went wrong. Please try again.';
+        err.status === 429 || (err.message && err.message.includes('rate_limit'))
+          ? 'Rate limit tercapai. Cuba lagi sebentar.'
+          : err.status === 500 && err.message?.includes('Too many requests')
+          ? 'Server sibuk. Cuba lagi dalam beberapa saat.'
+          : err.message || 'Maaf, ada masalah. Sila cuba lagi.';
       setMessages((prev) => [...prev, { role: 'assistant', content: msg }]);
       setStreamingContent('');
       setStreamingTool(null);

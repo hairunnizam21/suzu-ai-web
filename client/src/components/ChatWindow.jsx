@@ -41,7 +41,7 @@ export default function ChatWindow({ messages, onSend, onSendApk, isLoading, str
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if ((!input.trim() && !imageFile && !apkFile && !textAttach) || isLoading) return;
+    if (!input.trim() && !imageFile && !apkFile && !textAttach) return;
     if (apkFile) {
       onSendApk?.(apkFile, input.trim());
       setApkFile(null);
@@ -200,33 +200,7 @@ export default function ChatWindow({ messages, onSend, onSendApk, isLoading, str
           );
         })}
 
-        {streamingTool && (
-          <div className="message assistant tool">
-            <div className="message-avatar">
-              <div className="avatar-ai">SA</div>
-            </div>
-            <div className="message-body">
-              <span className="message-role">Tool</span>
-              <div className="message-content tool-call">
-                {streamingTool.phase === 'call' ? '↳ calling' : '✓ result from'}{' '}
-                <code>{streamingTool.name}</code>
-                {streamingTool.phase === 'call' && streamingTool.args && (
-                  <pre className="tool-args">{JSON.stringify(streamingTool.args, null, 2)}</pre>
-                )}
-                {streamingTool.phase === 'result' && (
-                  <pre className="tool-args">
-                    {(() => {
-                      const r = streamingTool.result;
-                      if (!r) return '';
-                      const s = JSON.stringify(r, null, 2);
-                      return s.length > 1500 ? s.slice(0, 1500) + '…' : s;
-                    })()}
-                  </pre>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Tool calls hidden from user — internal only */}
 
         {(() => {
           const visible = stripThinking(streamingContent);
@@ -324,9 +298,8 @@ export default function ChatWindow({ messages, onSend, onSendApk, isLoading, str
               : 'Message SuzuneiAyano-AI...'
             }
             rows={1}
-            disabled={isLoading}
           />
-          <button type="submit" className="send-btn" disabled={(!input.trim() && !imageFile && !apkFile && !textAttach) || isLoading}>
+          <button type="submit" className="send-btn" disabled={!input.trim() && !imageFile && !apkFile && !textAttach}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
               <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
             </svg>
