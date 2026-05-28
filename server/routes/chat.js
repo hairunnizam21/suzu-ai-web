@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { verifyAuth } from '../middleware/auth.js';
 import { getDB, getUsage, addTokens, DEFAULT_DAILY_TOKEN_LIMIT } from '../db.js';
 import { AI_TOOLS, runToolCall } from '../utils/aiTools.js';
+import { createChatWithFailover } from '../utils/tokenPool.js';
 
 export const chatRouter = Router();
 
@@ -192,12 +193,11 @@ chatRouter.post('/conversations/:id/messages', async (req, res) => {
 
   try {
     for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
-      const openai = getOpenAIClient();
-      const stream = await openai.chat.completions.create({
-        model: conversation.model || getDefaultModel(),
+      const requestedModel = conversation.model || getDefaultModel();
+      const { stream } = await createChatWithFailover({
+        model: requestedModel,
         messages: apiMessages,
         tools: AI_TOOLS,
-        stream: true,
         stream_options: { include_usage: true },
       });
 

@@ -154,6 +154,64 @@ adminRouter.post('/users/:id/reset-tokens', (req, res) => {
   res.json({ ok: true });
 });
 
+// --- API Token Sets (multi-key failover) ---
+
+adminRouter.get('/tokens', (_req, res) => {
+  const db = getDB();
+  const rows = db
+    .prepare('SELECT * FROM api_tokens ORDER BY priority ASC, id ASC')
+    .all();
+  // Mask keys before sending
+  const tokens = rows.map((r) => ({
+    ...r,
+    api_key_masked: maskSecret(r.api_key),
+  }));
+  // Remove raw key from response
+  tokens.forEach((t) => delete t.api_key);
+  res.json({ tokens });
+});
+
+adminRouter.post('/tokens', (req, res) => {
+  const { name, base_url, api_key, model, priority } = req.body || {};
+  if (!name || !base_url || !api_key || !model) {
+    return res.status(400).json({ error: 'name, base_url, api_key, model are required' });
+  }
+  const db = getDB();
+  const r = db
+    .prepare(
+      'INSERT INTO api_tokens (name, base_url, api_key, model, priority) VALUES (?, ?, ?, ?, ?)'
+    )
+    .run(name, base_url, api_key, model, Number(priority) || 100);
+  res.json({ ok: true, id: r.lastInsertRowid });
+});
+
+adminRouter.put('/tokens/:id', (req, res) => {
+  const { name, base_url, api_key, model, priority, status } = req.body || {};
+  const db = getDB();
+  const existing = db.prepare('SELECT * FROM api_tokens WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Token not found' });
+
+  const updates = {
+    name: name || existing.name,
+    base_url: base_url || existing.base_url,
+    api_key: api_key || existing.api_key,
+    model: model || existing.model,
+    priority: priority != null ? Number(priority) : existing.priority,
+    status: status || existing.status,
+  };
+  db.prepare(
+    'UPDATE api_tokens SET name=?, base_url=?, api_key=?, model=?, priority=?, status=? WHERE id=?'
+  ).run(updates.name, updates.base_url, updates.api_key, updates.model, updates.priority, updates.status, req.params.id);
+  res.json({ ok: true });
+});
+
+adminRouter.delete('/tokens/:id', (req, res) => {
+  const db = getDB();
+  const r = db.prepare('DELETE FROM api_tokens WHERE id = ?').run(req.params.id);
+  if (!r.changes) return res.status(404).json({ error: 'Token not found' });
+  res.json({ ok: true });
+});
+
 // --- Backup / Restore ---
 
 /**
